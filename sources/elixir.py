@@ -1,6 +1,8 @@
 import os
 import torch as t
 
+from torch import optim
+
 from sources.brain import GolemBrain
 from sources.golem import Golem
 
@@ -43,6 +45,7 @@ class Trajectory:
                 team_index=player.id,
                 d=elixir_config.map_size,
                 pos=player.position,
+                start_level=player.level,
                 observation_threshold=elixir_config.observation_steps,
                 circular_view=elixir_config.observation_steps,
                 decaying_factor=elixir_config.info_decay
@@ -75,24 +78,135 @@ class Trajectory:
     ):
         actions     = []
         log_probs   = []
+        values      = []
         
         # Get all logprob
         for golem in self.golems:
-            action, log_prob = golem.sample_actions(brain)
+            
+            # TODO: if golem is dead, I put a Do Nothing in the queue and None in log_prob/values
+            
+            if golem.alive == False:
+                actions.append(["Do Nothing"])
+                log_probs.append(None)
+                values.append(None)
+                continue
+            
+            action, log_prob, critic = golem.sample_actions(brain)
             actions.append(golem.raw_distribution_to_action(action))
             log_probs.append(log_prob)
+            values.append(critic)
             
             # End turn
             golem.tick_end()
             
-        return actions, log_probs
+        return actions, log_probs, values
     
     def step(
         self
     ):
         # Apply a step to the universe
         return self.env.step()
+    
+    def reset(
+        self
+    ):
+        # Need to make a method to reset the trajectory in order to get into the next training step.
+        ...
 
+class AlgorithmConfig:
+    
+    def __init__(
+        self,
+        optimizer : type[optim.Optimizer] = optim.Adam,
+        optimizer_params : dict[str] = {"lr" : 1e-4}
+    ):
+        self.optimizer = optimizer
+        self.optimizer_params = optimizer_params
+
+class PPOConfig(AlgorithmConfig):
+    
+    def __init__(
+        self,
+        delta : float = 0.9,
+        epsilon : float = 0.1
+    ):
+        super().__init__()
+        
+        self.delta = delta
+        self.epsilon = epsilon
+
+class Algorithm:
+    
+    def __init__(
+        self,
+        brain : GolemBrain,
+        config : AlgorithmConfig
+    ):
+        # (Nb of steps, Nb of projections, Nb of players, Nb of actions (default 1))
+        self.rewards = []
+        self.log_probs = []
+        self.values = []
+        
+        self.optimizer = config.optimizer(brain.parameters(), **config.optimizer_params)
+    
+    def register_policy_rewards(
+        self,
+        policy_samples : list[list[t.Tensor]],
+        rewards : list[list[int]],
+        values : list[list[int]]
+    ):
+        """Add policy_rewards in the algorithm
+
+        Args:
+            policy_samples (list[list[t.Tensor]]): (Nb of projections, Nb of players, Nb of actions (default 1))
+            reward (list[list[]]): (Nb of projections, Nb of players, Nb of rewards (default 1))
+        """
+        self.log_probs.append(policy_samples)
+        self.rewards.append(rewards)
+        self.values.append(values)
+    
+    def optimize(self):
+        raise NotImplementedError(f"The optimize method is not implemented on the class {self.__class__.__name__}")
+
+# TODO LEFT: Make the GAE & PPO Algorithms
+# Call the method to add the reward, value, logprob in the optimize from the 
+
+class GAE(t.nn.Module):
+    
+    def __init__(self):
+        pass
+    
+    def forward(
+        self,
+        rewards : list[list[list[int]]],
+        probs : list[list[list[t.Tensor]]],
+        values : list[list[list[int]]]
+    ):
+        for step in range(len(rewards)):
+            ...
+    
+class PPO(Algorithm):
+    
+    def __init__(
+        self,
+        brain : GolemBrain,
+        config : PPOConfig
+    ):
+        super().__init__(brain, config)
+        
+        self.gae = GAE()
+    
+    def optimize(self):
+        # Decide on the Future algorithm
+        self.optimizer.zero_grad()
+        
+        # Calculate advantage using GAE
+        
+        # Calculate the CLIP ppo objective
+        # backward on clip ppo objective
+        # calculate critic error
+        # backpropagate
+        
 class Elixir:
     
     # Trainer
@@ -101,12 +215,14 @@ class Elixir:
         self,
         env : Environment,
         elixir_config : ElixirConfig,
+        algorithm : Algorithm,
         pretrained_brain : str | None = None
     ):  
         assert (pretrained_brain == None or os.path.exists(pretrained_brain)), f"Pretrained brain path {pretrained_brain} given does not exist"
         
         # TODO: Implement the pretrained_brain loading
         
+        self.algorithm = algorithm
         self.brain = GolemBrain()
         self.env : Environment = env
         self.trajectories = [
@@ -142,23 +258,22 @@ class Elixir:
         
         for epoch in range(epochs):
             
+            # TODO: Go over multiple step in the trajectories
+            
+            # Make a copy of each env+players when 
             # Sample All Golems from all env
             for id, trajectory in enumerate(self.trajectories):
-                t_actions, t_logprobs = trajectory.sample(self.brain)
-                
-                # TODO: Add all the forks,
-                # Add the loop to give the answer to the golems
-                # Add the math optimization
+                t_actions, t_logprobs, t_values = trajectory.sample(self.brain)
                 
                 # Queuing all golem commands
-                # TODO: Add check on alive or not
+                # Add check on alive or not
                 for golem_id, actions in enumerate(t_actions):
                     for action in actions:
                         if action == "Do Nothing":
                             continue
                         trajectory.players[golem_id].add_cmd(action)
                     
-                state, rewards, terminated = trajectory.step()
+                _, rewards, _ = trajectory.step()
                 # Fork + ok, spawn new golem based on the one that forked
                 for golem_id in range(len(t_actions)):
 
@@ -174,9 +289,9 @@ class Elixir:
                     # Send results of all commands to Golems
                     trajectory.golems[golem_id].read_player_queue(all_res)
                     
-                # Calculate rewards + opti
-                
-                
+            # TODO: Call algoritm.optimize()
+            self.algorithm.optimize()
+            
             # Fork -> Elixir (Frozen for 6 ticks)
             # Broadcast -> Golem
             # Incantation -> Golem (Frozen for 43 ticks)

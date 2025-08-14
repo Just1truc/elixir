@@ -133,6 +133,7 @@ class Golem:
         team_index : int,
         d : int,
         pos : t.Tensor,
+        start_level : int,
         observation_threshold : int = 3,
         circular_view : int = 3,
         decaying_factor : float = 0.9
@@ -177,7 +178,7 @@ class Golem:
             
         self.pe_grid = generate_2d_sinusoidal_pe(84, 84, d_model=64)  # or another dim
         
-        self.level = 1
+        self.level = start_level
         self.alive = True
         
         self.running_actions = []
@@ -266,16 +267,16 @@ class Golem:
         # The Action like broadcast, fork, incant, push, pickup and set down, all depend on the embedding of the tile the bot is on 
         
         if self.frozen > 0:
-            return -1, None
+            return -1, None, None
         
         if self.reliability_level <= 0:
             self.reliability_level = self.observation_threshold
             # Forced
-            return self.map_size * self.map_size + 6, None
+            return self.map_size * self.map_size + 6, None, None
         
         # TODO: Auto broadcast when seeing other agent aka (player >= 1 and reliance == gamma because it's next turn)
         if ((self.map[:,:,self.player_position] == 1) & (self.reliance_map == self.gamma)).any():
-            return self.map_size * self.map_size, None
+            return self.map_size * self.map_size, None, None
 
         d = self.map_size
         # Add agent info in the map before passing to brain
@@ -287,7 +288,7 @@ class Golem:
         
         tiles = self.map_size * self.map_size
         
-        full_action_space = brain(map_copy + pe) # N * N + 7
+        full_action_space, critic = brain(map_copy + pe) # N * N + 7
         full_action_space[:tiles] *= self.filters[self.orientation][d - self.pos[0]:2 * d - self.pos[0], d - self.pos[1]: 2 * d - self.pos[1]].reshape(d * d)
         full_action_space[:tiles] *= self.reliance_map.reshape(d * d)
         
@@ -311,7 +312,7 @@ class Golem:
         actions = distribution.sample((n_action,))
         
         # actions, probabilities
-        return actions, -distribution.log_prob(actions)
+        return actions, -distribution.log_prob(actions), critic
     
     def raw_distribution_to_action(
         self,
@@ -381,7 +382,6 @@ class Golem:
                 if action.split()[0] == "Set" and response == "ok":
                     self.map[*self.pos] -= (t.arange(len(self.resources)) == self.resources.index(action.split()[1]))
                     
-                
     def copy(self):
         
         golem = Golem(
@@ -396,6 +396,10 @@ class Golem:
         golem.reliance_map = self.reliance_map.clone()
         golem.inventory = self.inventory.clone()
         golem.level = self.level
+        golem.frozen = self.frozen
+        golem.alive = self.alive
+        golem.running_actions = self.running_actions
+        golem.reliability_level = self.reliability_level
         
         return golem
     

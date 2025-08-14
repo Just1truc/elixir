@@ -13,9 +13,10 @@ class GolemBrain(nn.Module):
         super().__init__()
         self.encoder_layer = nn.TransformerEncoderLayer(
             d_model = d_model,
-            n_head  = n_head,
+            nhead  = n_head,
             dim_feedforward = dim_feedforward,
-            dropout = 0
+            dropout = 0,
+            batch_first = True
         )
         self.encoder = nn.TransformerEncoder(
             self.encoder_layer,
@@ -25,6 +26,7 @@ class GolemBrain(nn.Module):
         # Prediction Heads broadcast, fork, incant, push (eject), pickup (7) and set down (7)
         self.action_heads   = nn.Linear(d_model, 4+7+7)
         self.heatmap_head   = nn.Linear(d_model, 1)
+        self.map_critic     = nn.Linear(d_model, 1)
 
 
     def forward(
@@ -35,11 +37,12 @@ class GolemBrain(nn.Module):
         """
         Args:
             x (t.Tensor): (N, N, 15)
-            returns (N * N + 6)
+            returns (N * N + 18), (1,) 
         """
         N, _, D = x.shape 
-        out = self.encoder(x.reshape(N * N, D))
+        out = self.encoder(x.reshape(1, N * N, D))
         
-        return t.concat([self.heatmap_head(out), self.action_heads(out[*position])])
+        action = t.concat([self.heatmap_head(out), self.action_heads(out[*position])])
+        critic = self.map_critic(out.mean(0))
     
-
+        return action, critic
