@@ -136,7 +136,9 @@ class Golem:
         start_level : int,
         observation_threshold : int = 3,
         circular_view : int = 3,
-        decaying_factor : float = 0.9
+        decaying_factor : float = 0.9,
+        spawn_tick_index : int = 0,
+        state_caching : bool = False
     ):
         assert pos.size() == (2,), "Invalid start position given"
         
@@ -150,9 +152,10 @@ class Golem:
         self.orientation = 0
         self.pos = pos
         self.gamma = decaying_factor
+        
+        self.spawn_tick_index = spawn_tick_index
 
-        # Position where the model calculated it should go        
-        self.future_position = pos
+        # Position where the model calculated it should go     
         self.map_size = d
         self.observation_threshold = observation_threshold
         self.reliability_level = 0
@@ -182,8 +185,11 @@ class Golem:
         self.alive = True
         
         self.running_actions = []
+        self.state_caching = state_caching
+        self.cache = None
 
     def get_agent_window(self):
+        
         half = self.map_size // 2
         x0 = self.pos[0] + 42 - half
         y0 = self.pos[1] + 42 - half
@@ -235,13 +241,15 @@ class Golem:
     def sample_actions(
         self,
         brain : GolemBrain,
-        n_action : int
+        n_action : int,
+        from_cache : tuple[t.Tensor, list[int]]  = None
     ):
         """
 
         Args:
             brain (GolemBrain): _description_
             n_action (int): _description_
+            from_cache: (entry, actions)
 
         Returns:
             _type_: _description_
@@ -266,29 +274,34 @@ class Golem:
         # Apply concat strategy results with resource_map as a part of the possible actions
         # The Action like broadcast, fork, incant, push, pickup and set down, all depend on the embedding of the tile the bot is on 
         
-        if self.frozen > 0:
-            return -1, None, None
-        
-        if self.reliability_level <= 0:
-            self.reliability_level = self.observation_threshold
-            # Forced
-            return self.map_size * self.map_size + 6, None, None
-        
-        # TODO: Auto broadcast when seeing other agent aka (player >= 1 and reliance == gamma because it's next turn)
-        if ((self.map[:,:,self.player_position] == 1) & (self.reliance_map == self.gamma)).any():
-            return self.map_size * self.map_size, None, None
+        if from_cache == None:
+            if self.frozen > 0:
+                return -1, None, None
 
-        d = self.map_size
-        # Add agent info in the map before passing to brain
-        # Add PE
-        map_copy = self.map.clone()
-        map_copy[*self.pos][self.agent_inventory_start:self.agent_inventory_end] += self.inventory
+            if self.reliability_level <= 0:
+                self.reliability_level = self.observation_threshold
+                # Forced
+                return self.map_size * self.map_size + 6, None, None
+
+            # TODO: Auto broadcast when seeing other agent aka (player >= 1 and reliance == gamma because it's next turn)
+            if ((self.map[:,:,self.player_position] == 1) & (self.reliance_map == self.gamma)).any():
+                return self.map_size * self.map_size, None, None
+
+            d = self.map_size
+            # Add agent info in the map before passing to brain
+            # Add PE
+            map_copy = self.map.clone()
+            map_copy[*self.pos][self.agent_inventory_start:self.agent_inventory_end] += self.inventory
+
+            pe = self.get_agent_window()
+
+            tiles = self.map_size * self.map_size
+
+            entry = map_copy + pe
+        else:
+            entry = from_cache[0]
         
-        pe = self.get_agent_window()
-        
-        tiles = self.map_size * self.map_size
-        
-        full_action_space, critic = brain(map_copy + pe) # N * N + 7
+        full_action_space, critic = brain(entry) # N * N + 7
         full_action_space[:tiles] *= self.filters[self.orientation][d - self.pos[0]:2 * d - self.pos[0], d - self.pos[1]: 2 * d - self.pos[1]].reshape(d * d)
         full_action_space[:tiles] *= self.reliance_map.reshape(d * d)
         
@@ -308,8 +321,14 @@ class Golem:
         # n * n, broadcast, fork, incant, push, pickup and set down, look
         
         # TODO: move the distribution setup so that the values are 
+        
         distribution = Categorical(probs=t.softmax(full_action_space))
-        actions = distribution.sample((n_action,))
+        # TODO: The cache must be the (entry and the actions)
+        if self.state_caching and from_cache == None:
+            actions = distribution.sample((n_action,))
+            self.cache = (entry, actions)
+        else:
+            actions = from_cache[1]
         
         # actions, probabilities
         return actions, -distribution.log_prob(actions), critic
