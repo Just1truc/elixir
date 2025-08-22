@@ -2,45 +2,74 @@ from __future__ import annotations
 
 import math
 import random
-# import constant
+from server import constant
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Optional
 
-from server.constant import Direction, Resource, RESOURCE_ENUM, ElevationRequirement
-from server.map import Map
-# import map
+from server import map
+from server.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
-    from player import Command
+    from server.player import Command
+
 
 class Player:
-    def __init__(self, id: int, map: Map, team: str):
-        self.id = id
-        self.team = team
-        self.map = map
-        self.level = 1
-        self.direction = Direction.NORTH
-        self.position = (random.randint(0, map.size - 1),
+    def __init__(self, id: int, map: map.Map, team: str):
+        """
+        Initialize a Player instance with ID, map, and team.
+        Args:
+            id (int): Player ID.
+            map (Map): Reference to the game map.
+            team (str): Team name.
+        """
+        self.id: int = id
+        self.team: str = team
+        self.map: map.Map = map
+        self.level: int = 1
+        self.position: tuple = (random.randint(0, map.size - 1),
                          random.randint(0, map.size - 1))
-        self.inventory = {res.value: 0 for res in Resource}
-        self.inventory[Resource.FOOD.value] = 10  # Starting food
-        self.cur_cmd: function = None
-        self.cur_cmd_param: list[str] = None
+        self.direction = constant.Direction.NORTH
+        self.inventory = {res.value: 0 for res in constant.Resource}
+        self.inventory[constant.Resource.FOOD.value] = 10  # Starting food
+        # Current command state
+        self.cur_cmd: Optional[Callable] = None
+        self.cur_cmd_param: Optional[list[str]] = None
         self.remain_tick = 0
         self.lifetime_tick = 1
         self.is_alive = True
-        self.command_queue: list[(function, list[str])] = []
+        # Queues
+        self.command_queue: list[tuple[Callable, list[str]]] = []
         self.response_queue: list[str] = []
+        logger.debug("Player created | id=%s team=%s pos=%s", self.id, self.team, self.position)
 
     def add_cmd(self, cmd: str):
-        cmd, param = self.get_cmd_func(cmd)
-        if cmd == None:
+        """
+        Add a command to the player's command queue.
+        Args:
+            cmd (str): Command string to be parsed and added.
+        """
+        if not cmd:
             return
-        self.command_queue.append((cmd, param))
+        cmd_func_param = self.get_cmd_func(cmd)
+        if cmd_func_param is None:
+            return
+        func, param = cmd_func_param
+        self.command_queue.append((func, param))
 
     @staticmethod
     def get_cmd_func(cmd: str):
+        """
+        Parse a command string and return the corresponding function and parameters.
+        Args:
+            cmd (str): Command string.
+        Returns:
+            tuple: (function, list of parameters) or None if not found.
+        """
         words = cmd.split()
+        if not words:
+            return None
         func = Command.get(words[0])
         if func == None:
             print(cmd + " cmd does not exist")
@@ -48,53 +77,104 @@ class Player:
         return func, words[1:]
 
     def add_res(self, res: str):
+        """
+        Add a response to the player's response queue.
+        Args:
+            res (str): Response string to add.
+        """
         self.response_queue.append(res)
 
     def get_res(self) -> str:
+        """
+        Retrieve and remove the next response from the response queue.
+        Returns:
+            str: The next response, or None if the queue is empty.
+        """
         if len(self.response_queue) != 0:
             return self.response_queue.pop(0)
         return None
 
+    def clone(self):
+        """
+        Create a deep copy of the player, including state and queues.
+        Returns:
+            Player: A new Player instance with the same state.
+        """
+        p = Player(self.id, self.map, self.team)
+        p.level = self.level
+        p.direction = self.direction
+        p.position = self.position  
+        p.inventory = self.inventory.copy() 
+        p.cur_cmd = self.cur_cmd
+        p.cur_cmd_param = self.cur_cmd_param.copy() if self.cur_cmd_param else None
+        p.remain_tick = self.remain_tick
+        p.lifetime_tick = self.lifetime_tick
+        p.is_alive = self.is_alive
+        p.command_queue = self.command_queue.copy()  
+        p.response_queue = self.response_queue.copy()
+        logger.debug("Player cloned | id=%s team=%s pos=%s", p.id, p.team, p.position)
+        return p
+    
     def check_food(self):
-        if self.lifetime_tick % 128 == 0 and self.inventory[Resource.FOOD.value] > 0:
-            self.inventory[Resource.FOOD.value] -= 1
+        """
+        Decrease food in inventory every 128 ticks if food is available.
+        """
+        if self.lifetime_tick % 128 == 0 and self.inventory[constant.Resource.FOOD.value] > 0:
+            self.inventory[constant.Resource.FOOD.value] -= 1
 
     def forward(self):
+        """
+        Move the player forward in the direction they are facing, with map wrapping.
+        """
         x, y = self.position
-        if self.direction == Direction.NORTH:
-            self.position = (x, (y - 1) % self.map.size)
-        elif self.direction == Direction.EAST:
-            self.position = ((x + 1) % self.map.size, y)
-        elif self.direction == Direction.SOUTH:
-            self.position = (x, (y + 1) % self.map.size)
-        elif self.direction == Direction.WEST:
-            self.position = ((x - 1) % self.map.size, y)
+        size = self.map.size
+        if self.direction == constant.Direction.NORTH:
+            y = (y - 1) % size
+        elif self.direction == constant.Direction.EAST:
+            x = (x + 1) % size
+        elif self.direction == constant.Direction.SOUTH:
+            y = (y + 1) % size
+        elif self.direction == constant.Direction.WEST:
+            x = (x - 1) % size
+        self.position = (x, y)
         self.add_res("ok")
+        logger.debug("Player %s forward to %s", self.id, self.position)
 
     def right(self):
-        self.direction = Direction((self.direction.value + 1) % 4)
+        """
+        Turn the player to the right (clockwise).
+        """
+        self.direction = constant.Direction((self.direction.value + 1) % 4)
         self.add_res("ok")
+        logger.debug("Player %s right dir=%s", self.id, self.direction)
 
     def left(self):
-        self.direction = Direction((self.direction.value - 1) % 4)
+        """
+        Turn the player to the left (counter-clockwise).
+        """
+        self.direction = constant.Direction((self.direction.value - 1) % 4)
         self.add_res("ok")
+        logger.debug("Player %s left dir=%s", self.id, self.direction)
 
     def look(self):
+        """
+        Look around and return a simple representation of the current tile resources.
+        """
         x, y = self.position
         vision = []
         for depth in range(self.level):
             tiles_in_view = []
             for offset in range(-depth, depth + 1):
-                if self.direction == Direction.NORTH:
+                if self.direction == constant.Direction.NORTH:
                     tx = (x + offset) % self.map.size
                     ty = (y - depth) % self.map.size
-                elif self.direction == Direction.SOUTH:
+                elif self.direction == constant.Direction.SOUTH:
                     tx = (x + offset) % self.map.size
                     ty = (y + depth) % self.map.size
-                elif self.direction == Direction.EAST:
+                elif self.direction == constant.Direction.EAST:
                     tx = (x + depth) % self.map.size
                     ty = (y + offset) % self.map.size
-                elif self.direction == Direction.WEST:
+                elif self.direction == constant.Direction.WEST:
                     tx = (x - depth) % self.map.size
                     ty = (y + offset) % self.map.size
                 tile = self.map.tiles[ty][tx]
@@ -106,134 +186,175 @@ class Player:
                                      if tile_contents else "")
             vision.extend(tiles_in_view)
         self.add_res(f"[{', '.join(vision)}]")
+        logger.debug("Player %s look pos=%s lvl=%s", self.id, self.position, self.level)
 
     def inventory_cmd(self):
+        """
+        Report the player's current inventory as a formatted string.
+        """
         inv_items = [f"{res} {qty}" for res,
                      qty in self.inventory.items() if qty > 0]
         self.add_res(f"[{', '.join(inv_items)}]")
+        logger.debug("Player %s inventory queried", self.id)
 
     def broadcast(self, text: str):
-        # Calculate direction for each player
+        """
+        Broadcast a message to all players, indicating direction relative to each, using shortest toroidal path and trigonometric tile numbering.
+        Args:
+            text (str): The message to broadcast.
+        """
         for player in self.map.players:
             if player is self:
-                # Same tile
                 player.add_res("message 0, " + text)
                 continue
 
-            # Calculate relative position considering toroidal map
-            dx = (self.position[0] - player.position[0]) % self.map.size
-            if dx > self.map.size // 2:
-                dx -= self.map.size
+            # Compute shortest toroidal vector from emitter (self) to receiver (player)
+            sx, sy = self.position
+            rx, ry = player.position
+            size = self.map.size
 
-            dy = (self.position[1] - player.position[1]) % self.map.size
-            if dy > self.map.size // 2:
-                dy -= self.map.size
+            # Find minimal dx, dy (toroidal)
+            dx_options = [rx - sx, rx - sx + size, rx - sx - size]
+            dy_options = [ry - sy, ry - sy + size, ry - sy - size]
+            dx = min(dx_options, key=lambda d: abs(d))
+            dy = min(dy_options, key=lambda d: abs(d))
 
-            # Calculate angle in radians
-            angle_rad = math.atan2(dy, dx)
+            # If on same tile, direction is 0
+            if dx == 0 and dy == 0:
+                player.add_res("message 0, " + text)
+                continue
 
-            # Convert to direction based on player's orientation
-            if player.direction == Direction.NORTH:
-                player_angle = -math.pi/2
-            elif player.direction == Direction.EAST:
-                player_angle = 0
-            elif player.direction == Direction.SOUTH:
-                player_angle = math.pi/2
-            else:  # WEST
-                player_angle = math.pi
+            # Rotate vector according to receiver's orientation (trigonometric, 1 is in front)
+            # North: (0,-1), East: (1,0), South: (0,1), West: (-1,0)
+            # We want to rotate the vector so that 'front' is always (0,-1)
+            if player.direction == constant.Direction.NORTH:
+                tx, ty = dx, dy
+            elif player.direction == constant.Direction.EAST:
+                tx, ty = -dy, dx
+            elif player.direction == constant.Direction.SOUTH:
+                tx, ty = -dx, -dy
+            elif player.direction == constant.Direction.WEST:
+                tx, ty = dy, -dx
 
-            relative_angle = angle_rad - player_angle
-            if relative_angle < 0:
-                relative_angle += 2 * math.pi
+            # Calculate angle from (0,0) to (tx,ty), 0 is front, increases counterclockwise
+            angle = math.atan2(tx, -ty)  # y axis points down, so -ty
+            angle_deg = (math.degrees(angle) + 360) % 360
 
-            relative_angle_deg = math.degrees(relative_angle) % 360
-
-            if relative_angle_deg <= 22.5 or relative_angle_deg > 337.5:
-                direction_num = 1
-            elif relative_angle_deg <= 67.5:
-                direction_num = 2
-            elif relative_angle_deg <= 112.5:
-                direction_num = 3
-            elif relative_angle_deg <= 157.5:
-                direction_num = 4
-            elif relative_angle_deg <= 202.5:
-                direction_num = 5
-            elif relative_angle_deg <= 247.5:
-                direction_num = 6
-            elif relative_angle_deg <= 292.5:
-                direction_num = 7
-            else:
-                direction_num = 8
+            # Tile numbering: 1 is front, then counterclockwise (2: front-left, ..., 8: front-right)
+            # Each sector is 45 degrees
+            direction_num = int(((angle_deg + 22.5) % 360) // 45) + 1
 
             player.add_res(f"message {direction_num}, {text}")
         self.add_res("ok")
+        logger.debug("Player %s broadcast '%s'", self.id, text)
 
     def connect_nbr(self):
+        """
+        Return the number of available connection slots (eggs) for the player's team.
+        """
         self.add_res(str(self.map.nb_eggs(self.team)))
+        logger.debug("Player %s connect_nbr", self.id)
 
     def fork(self):
-        self.map.eggs_tile[self.team].append(
-            map.Coordinate(self.position[0], self.position[1]))
+        """
+        Add an egg for the player's team at the player's current position.
+        """
+        self.map.eggs_tile[self.team].append(self.position)
         self.add_res("ok")
+        logger.debug("Player %s fork at %s", self.id, self.position)
 
     def eject(self):
-        x, y = self.position
-        ejected_players = []
-        for player in self.map.players:
-            if player is not self and player.position == (x, y):
-                px, py = player.position
-                if self.direction == Direction.NORTH:
-                    player.position = (px, (py - 1) % self.map.size)
-                elif self.direction == Direction.EAST:
-                    player.position = ((px + 1) % self.map.size, py)
-                elif self.direction == Direction.SOUTH:
-                    player.position = (px, (py + 1) % self.map.size)
-                elif self.direction == Direction.WEST:
-                    player.position = ((px - 1) % self.map.size, py)
-                ejected_players.append(player)
-        self.add_res("ok" if ejected_players else "ko")
+        """
+        Eject other players from the current tile in the direction the player is facing.
+        Also notifies ejected players with the opposite direction value (source of push).
+        """
+        moved = False
+        size = self.map.size
+        # Opposite direction of the ejection (where the push comes from)
+        push_from = constant.Direction((self.direction.value + 2) % 4)
+        for p in self.map.players:
+            if p is self or p.position != self.position:
+                continue
+            x, y = p.position
+            if self.direction == constant.Direction.NORTH:
+                y = (y - 1) % size
+            elif self.direction == constant.Direction.EAST:
+                x = (x + 1) % size
+            elif self.direction == constant.Direction.SOUTH:
+                y = (y + 1) % size
+            elif self.direction == constant.Direction.WEST:
+                x = (x - 1) % size
+            p.position = (x, y)
+            # Notify ejected player of the direction of the push source
+            p.add_res(f"eject: {push_from.value}")
+            moved = True
+        self.add_res("ok" if moved else "ko")
+        logger.debug("Player %s eject from %s", self.id, self.position)
 
     def take(self, resource: str):
-        if resource not in [res.value for res in Resource]:
-            return self.add_res("ko")
+        """
+        Take one unit of a resource from the current tile if available.
+        """
+        res_enum = constant.RESOURCE_ENUM.get(resource)
+        if res_enum is None:
+            self.add_res("ko")
+            return
         x, y = self.position
-        if self.map.tiles[y][x][RESOURCE_ENUM[resource]] <= 0:
-            return self.add_res("ko")
-        self.map.tiles[y][x][RESOURCE_ENUM[resource]] -= 1
-        self.inventory[resource] += 1
-        self.add_res("ok")
+        if self.map.tiles[y][x][res_enum] > 0:
+            self.map.tiles[y][x][res_enum] -= 1
+            self.inventory[res_enum.value] += 1
+            self.add_res("ok")
+        else:
+            self.add_res("ko")
+        logger.debug("Player %s take %s", self.id, resource)
 
     def set(self, resource: str):
-        if resource not in [res.value for res in Resource] or self.inventory.get(resource) <= 0:
-            return self.add_res("ko")
-        x, y = self.position
-        self.inventory[resource] -= 1
-        self.map.tiles[y][x][RESOURCE_ENUM[resource]] += 1
-        self.add_res("ok")
+        """
+        Set (drop) one unit of a resource from inventory onto the current tile if available.
+        """
+        res_enum = constant.RESOURCE_ENUM.get(resource)
+        if res_enum is None:
+            self.add_res("ko")
+            return
+        if self.inventory.get(res_enum.value, 0) > 0:
+            self.inventory[res_enum.value] -= 1
+            x, y = self.position
+            self.map.tiles[y][x][res_enum] += 1
+            self.add_res("ok")
+        else:
+            self.add_res("ko")
+        logger.debug("Player %s set %s", self.id, resource)
 
     def incantation(self):
-        if self.level >= 8:
-            return self.add_res("ko")
-        req = ElevationRequirement.requirements.get(self.level)
-        if not req:
-            return self.add_res("ko")
-        players_required, resources_required = req
+        """
+        Attempt to start an incantation on the current tile if requirements are met.
+        """
+        lvl = self.level
+        req_players, req_resources = constant.ElevationRequirement.requirements.get(lvl, (0, {}))
         x, y = self.position
-        players_on_tile = [p for p in self.map.players if p.position == (
-            x, y) and p.level == self.level and p is not self]
-        if len(players_on_tile) + 1 < players_required:  # +1 for self
-            return self.add_res("ko")
+        # Players of same level on tile
+        same_tile_players = [p for p in self.map.players if p.position == (x, y) and p.level == lvl]
+        # Check resources on tile
         tile = self.map.tiles[y][x]
-        for resource, count in resources_required.items():
-            if tile[resource] < count:
-                return self.add_res("ko")
-        for resource, count in resources_required.items():
-            tile[resource] -= count
-        self.map.incanted_tile[(x, y)] = map.IncantationTile(
-            CommandTick[Player.incantation], self.level)
-        self.add_res("Elevation underway\n")
+        has_resources = all(tile.get(r, 0) >= cnt for r, cnt in req_resources.items())
+        if len(same_tile_players) >= req_players and has_resources:
+            # Consume resources
+            for r, cnt in req_resources.items():
+                tile[r] -= cnt
+            # Start incantation
+            self.map.incanted_tile[(x, y)] = map.IncantationTile(remaining_ticks=300, level=lvl)
+            for p in same_tile_players:
+                p.add_res("Elevation underway")
+        else:
+            self.add_res("ko")
+        logger.debug("Player %s incantation at %s lvl=%s", self.id, self.position, self.level)
 
 
+"""
+Command
+
+Maps command names (as strings) to their corresponding Player class methods. Used to dispatch player actions based on command input.
+"""
 Command = {
     "Forward": Player.forward,
     "Right": Player.right,
@@ -249,6 +370,11 @@ Command = {
     "Incantation": Player.incantation
 }
 
+"""
+CommandTick
+
+Maps Player class methods to the number of ticks (time units) required to execute each command. Used for scheduling and command timing.
+"""
 CommandTick = {
     Player.forward: 7,
     Player.right: 7,

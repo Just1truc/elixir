@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zappy Server Dashboard</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .card h3 {
+            margin-top: 0;
+            color: #555;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        .stat-label {
+            font-weight: bold;
+            color: #666;
+        }
+        .stat-value {
+            color: #333;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            background: #007bff;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .success { background: #28a745; }
+        .danger { background: #dc3545; }
+        .warning { background: #ffc107; color: #212529; }
+        
+        .events {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .event {
+            padding: 5px 0;
+            border-bottom: 1px solid #eee;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .event:last-child {
+            border-bottom: none;
+        }
+        .event-time {
+            color: #666;
+            margin-right: 10px;
+        }
+        .event-type {
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .step-end { color: #28a745; }
+        .player-died { color: #dc3545; }
+        .player-property-changed { color: #007bff; }
+        .tile-changed { color: #6f42c1; }
+        
+        .players-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+        }
+        .player-card {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            border-left: 4px solid #007bff;
+        }
+        .player-card.dead {
+            border-left-color: #dc3545;
+            opacity: 0.6;
+        }
+        .player-name {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .player-info {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status.connected { background: #d4edda; color: #155724; }
+        .status.disconnected { background: #f8d7da; color: #721c24; }
+        
+        @media (max-width: 768px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+            .controls {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 Zappy Server Dashboard</h1>
+        
+        <div class="controls">
+            <button id="connectBtn" onclick="connect()">Connect to Server</button>
+            <button id="stepBtn" onclick="stepServer()" disabled>Step Server</button>
+            <button id="resetBtn" onclick="resetServer()" disabled>Reset Server</button>
+            <button id="autoStepBtn" onclick="toggleAutoStep()" disabled>Auto Step: OFF</button>
+            <span class="status disconnected" id="connectionStatus">Disconnected</span>
+        </div>
+        
+        <div class="dashboard">
+            <div class="card">
+                <h3>📊 Server Statistics</h3>
+                <div class="stat">
+                    <span class="stat-label">Current Tick:</span>
+                    <span class="stat-value" id="currentTick">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Alive Players:</span>
+                    <span class="stat-value" id="alivePlayers">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Total Players:</span>
+                    <span class="stat-value" id="totalPlayers">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Teams:</span>
+                    <span class="stat-value" id="teamsCount">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Average Level:</span>
+                    <span class="stat-value" id="avgLevel">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Highest Level:</span>
+                    <span class="stat-value" id="highestLevel">-</span>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h3>👥 Team Overview</h3>
+                <div id="teamsOverview">
+                    <p>No data available</p>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h3>🗺️ Map Information</h3>
+                <div class="stat">
+                    <span class="stat-label">Map Size:</span>
+                    <span class="stat-value" id="mapSize">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Total Eggs:</span>
+                    <span class="stat-value" id="totalEggs">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Incantations:</span>
+                    <span class="stat-value" id="incantations">-</span>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h3>📈 Real-time Events</h3>
+                <div class="events" id="eventsLog">
+                    <p>Waiting for events...</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3>🏃 Players</h3>
+            <div class="players-grid" id="playersGrid">
+                <p>No players data</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let connected = false;
+        let eventSource = null;
+        let autoStepInterval = null;
+        const API_BASE = 'http://localhost:5000/api';
+        
+        async function apiRequest(endpoint, options = {}) {
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    ...options
+                });
+                return await response.json();
+            } catch (error) {
+                console.error('API request failed:', error);
+                return { success: false, error: error.message };
+            }
+        }
+        
+        async function connect() {
+            // Test connection
+            const health = await apiRequest('/health');
+            if (!health.success) {
+                alert('Failed to connect to server. Make sure the REST API is running on localhost:5000');
+                return;
+            }
+            
+            connected = true;
+            updateConnectionStatus(true);
+            
+            // Enable controls
+            document.getElementById('stepBtn').disabled = false;
+            document.getElementById('resetBtn').disabled = false;
+            document.getElementById('autoStepBtn').disabled = false;
+            document.getElementById('connectBtn').disabled = true;
+            
+            // Start event stream
+            startEventStream();
+            
+            // Initial data load
+            updateDashboard();
+        }
+        
+        function updateConnectionStatus(isConnected) {
+            const status = document.getElementById('connectionStatus');
+            if (isConnected) {
+                status.textContent = 'Connected';
+                status.className = 'status connected';
+            } else {
+                status.textContent = 'Disconnected';
+                status.className = 'status disconnected';
+            }
+        }
+        
+        function startEventStream() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            eventSource = new EventSource(`${API_BASE}/events`);
+            
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    addEvent(data);
+                    
+                    // Update dashboard on step_end events
+                    if (data.type === 'step_end') {
+                        updateDashboard();
+                    }
+                } catch (error) {
+                    console.error('Failed to parse event:', error);
+                }
+            };
+            
+            eventSource.onerror = function(error) {
+                console.error('EventSource failed:', error);
+                updateConnectionStatus(false);
+            };
+        }
+        
+        function addEvent(eventData) {
+            const eventsLog = document.getElementById('eventsLog');
+            const eventDiv = document.createElement('div');
+            eventDiv.className = `event ${eventData.type.replace('_', '-')}`;
+            
+            const time = new Date(eventData.timestamp * 1000).toLocaleTimeString();
+            let message = '';
+            
+            switch (eventData.type) {
+                case 'step_end':
+                    message = `Tick ${eventData.data.ticks}`;
+                    break;
+                case 'player_died':
+                    message = `Player ${eventData.data.id} (${eventData.data.team}) died`;
+                    break;
+                case 'player_property_changed':
+                    message = `Player ${eventData.data.player_id} ${eventData.data.property}: ${eventData.data.old_value} → ${eventData.data.new_value}`;
+                    break;
+                case 'tile_changed':
+                    message = `Tile (${eventData.data.position[0]}, ${eventData.data.position[1]}) ${eventData.data.resource}: ${eventData.data.new_amount}`;
+                    break;
+                default:
+                    message = eventData.type;
+            }
+            
+            eventDiv.innerHTML = `
+                <span class="event-time">${time}</span>
+                <span class="event-type">${eventData.type}</span>
+                ${message}
+            `;
+            
+            eventsLog.insertBefore(eventDiv, eventsLog.firstChild);
+            
+            // Keep only last 50 events
+            while (eventsLog.children.length > 50) {
+                eventsLog.removeChild(eventsLog.lastChild);
+            }
+        }
+        
+        async function updateDashboard() {
+            if (!connected) return;
+            
+            // Get statistics
+            const stats = await apiRequest('/server/stats');
+            if (stats.success) {
+                const data = stats.data;
+                document.getElementById('currentTick').textContent = data.total_ticks;
+                document.getElementById('alivePlayers').textContent = data.alive_players;
+                document.getElementById('totalPlayers').textContent = data.total_players;
+                document.getElementById('teamsCount').textContent = data.teams_count;
+                document.getElementById('avgLevel').textContent = data.average_player_level.toFixed(1);
+                document.getElementById('highestLevel').textContent = data.highest_level;
+                document.getElementById('totalEggs').textContent = data.total_eggs;
+                document.getElementById('incantations').textContent = data.incantations_in_progress;
+            }
+            
+            // Get server data for map info
+            const serverData = await apiRequest('/server');
+            if (serverData.success) {
+                document.getElementById('mapSize').textContent = `${serverData.data.map_size}×${serverData.data.map_size}`;
+            }
+            
+            // Get teams
+            const teams = await apiRequest('/teams');
+            if (teams.success) {
+                updateTeamsOverview(teams.data);
+            }
+            
+            // Get players
+            const players = await apiRequest('/players');
+            if (players.success) {
+                updatePlayersGrid(players.data);
+            }
+        }
+        
+        function updateTeamsOverview(teams) {
+            const container = document.getElementById('teamsOverview');
+            container.innerHTML = '';
+            
+            teams.forEach(team => {
+                const teamDiv = document.createElement('div');
+                teamDiv.className = 'stat';
+                teamDiv.innerHTML = `
+                    <span class="stat-label">${team.team}:</span>
+                    <span class="stat-value">${team.alive_count}/${team.total_players} alive (avg lvl ${team.average_level.toFixed(1)})</span>
+                `;
+                container.appendChild(teamDiv);
+            });
+        }
+        
+        function updatePlayersGrid(players) {
+            const container = document.getElementById('playersGrid');
+            container.innerHTML = '';
+            
+            players.forEach(player => {
+                const playerDiv = document.createElement('div');
+                playerDiv.className = `player-card ${player.is_alive ? '' : 'dead'}`;
+                playerDiv.innerHTML = `
+                    <div class="player-name">Player ${player.id}</div>
+                    <div class="player-info">
+                        Team: ${player.team}<br>
+                        Level: ${player.level}<br>
+                        Position: (${player.position[0]}, ${player.position[1]})<br>
+                        Status: ${player.is_alive ? '✅ Alive' : '💀 Dead'}<br>
+                        Food: ${player.inventory.food || 0}
+                    </div>
+                `;
+                container.appendChild(playerDiv);
+            });
+        }
+        
+        async function stepServer() {
+            const result = await apiRequest('/server/step', { method: 'POST' });
+            if (!result.success) {
+                alert('Failed to step server: ' + result.error);
+            }
+        }
+        
+        async function resetServer() {
+            if (confirm('Are you sure you want to reset the server?')) {
+                const result = await apiRequest('/server/reset', { 
+                    method: 'POST',
+                    body: JSON.stringify({ nb_eggs: 5, teams: ['team1', 'team2'] })
+                });
+                if (result.success) {
+                    updateDashboard();
+                } else {
+                    alert('Failed to reset server: ' + result.error);
+                }
+            }
+        }
+        
+        function toggleAutoStep() {
+            const btn = document.getElementById('autoStepBtn');
+            if (autoStepInterval) {
+                clearInterval(autoStepInterval);
+                autoStepInterval = null;
+                btn.textContent = 'Auto Step: OFF';
+                btn.className = '';
+            } else {
+                autoStepInterval = setInterval(stepServer, 1000);
+                btn.textContent = 'Auto Step: ON';
+                btn.className = 'success';
+            }
+        }
+        
+        // Initial connection attempt
+        setTimeout(() => {
+            document.getElementById('connectBtn').click();
+        }, 500);
+    </script>
+</body>
+</html>
