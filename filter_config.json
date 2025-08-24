@@ -1,0 +1,27 @@
+{
+    "expr": "min( tE + ex + (0 if (min(ny,sy)==0) else 1 + min(ny,sy)),  tW + wx + (0 if (min(ny,sy)==0) else 1 + min(ny,sy)),  tN + ny + (0 if (min(ex,wx)==0) else 1 + min(ex,wx)),  tS + sy + (0 if (min(ex,wx)==0) else 1 + min(ex,wx)) )",
+    "w": 10,
+    "h": 10,
+    "cell": 56,
+    "orientation": 0,
+    "center_x": 5,
+    "center_y": 5,
+    "show_text": true,
+    "params": [
+      { "name": "idxE", "type": "int", "value": "0" },
+      { "name": "idxN", "type": "int", "value": "1" },
+      { "name": "idxW", "type": "int", "value": "2" },
+      { "name": "idxS", "type": "int", "value": "3" },
+  
+      { "name": "ex", "type": "int", "value": "x % w" },
+      { "name": "wx", "type": "int", "value": "(-x) % w" },
+      { "name": "ny", "type": "int", "value": "(-y) % h" },
+      { "name": "sy", "type": "int", "value": "y % h" },
+  
+      { "name": "tE", "type": "int", "value": "min((o-idxE)%4, (idxE-o)%4)" },
+      { "name": "tN", "type": "int", "value": "min((o-idxN)%4, (idxN-o)%4)" },
+      { "name": "tW", "type": "int", "value": "min((o-idxW)%4, (idxW-o)%4)" },
+      { "name": "tS", "type": "int", "value": "min((o-idxS)%4, (idxS-o)%4)" }
+    ]
+  }
+  
