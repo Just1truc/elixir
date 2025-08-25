@@ -18,7 +18,6 @@ class BrainConfig:
         
         self.dim_feedforward    = dim_feedforward
 
-
 class GolemBrain(nn.Module):
     
     def __init__(

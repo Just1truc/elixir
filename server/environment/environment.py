@@ -80,7 +80,7 @@ class Environment:
                 "alive": player.is_alive
             })
         
-        for _ in range(7):
+        for _ in range(8):
             self.server.step()
         state = self.get_state()
         rewards = self.reward() 
@@ -158,6 +158,7 @@ class Environment:
         """Add a player to the environment.
         Falls back to direct creation if no egg is available for the team."""
         team = self.teams_name[team_idx]
+        
         p = self.server.add_player(team)
         if p is None:
             # Fallback: create player directly (use provided position or random)
@@ -197,4 +198,6 @@ class Environment:
                           shuffle_nb_teams=True, shuffle_seed=True)
         logger.debug("Shuffled all params | size=%s nb_connect=%s teams=%s", self.size, getattr(self, 'nb_connect', self.init_nb_connect), self.teams_name)
 
-
+    def connect_player(self, team: str) -> Player | None:
+        """Fork a new player and connect it to the same team"""
+        return self.server.add_player(team)

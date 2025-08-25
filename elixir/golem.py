@@ -1,11 +1,8 @@
 
 """ Global Imports """
-import io
 import math
 import torch
-import base64
 import torch as t
-import numpy as np
 
 from collections import Counter
 from torch.distributions import Categorical
@@ -13,8 +10,8 @@ from matplotlib import pyplot as plt
 
 """ Local Imports """
 from elixir.brain import GolemBrain
-import math
-import torch
+from elixir.filters import PosFilter
+from elixir.network import NetworkTensor
 
 def generate_2d_sinusoidal_pe(height, width, d_model):
     assert d_model % 4 == 0, "d_model must be divisible by 4"
@@ -65,38 +62,7 @@ def next_action_90(a, g, h, eps=1e-9):
         return 'Left'
     else:
         return 'Right'
-
-class NetworkTensor:
-    
-    def __init__(
-        self,
-        data : str | t.Tensor
-    ):
-        """
-        Args:
-            data (str | t.Tensor): If it's a tensor, then we will serialize it
-            # If it's a serialized version, we deserialize it
-        """
-        self.data = data
-
-    def deserialize(self):
         
-        def apply(data : str):
-            b = base64.b64decode(data.encode("ascii"))
-            return torch.load(io.BytesIO(b), map_location="cpu")
-
-        return self.data if isinstance(self.data, t.Tensor) else apply(self.data)
-        
-    def serialize(self):
-        
-        def apply(data : t.Tensor):
-            buf = io.BytesIO()
-            t.save(data, buf)
-            
-            return base64.b64encode(buf.getvalue()).decode("ascii")
-        
-        return self.data if isinstance(self.data, str) else apply(self.data)
-
 class Golem:
     
     possible_actions = ["Broadcast", "Fork", "Incantation", "Eject"]
@@ -141,12 +107,13 @@ class Golem:
         d : int,
         pos : t.Tensor,
         start_level : int,
+        pos_filter : PosFilter,
         d_model : int = 64,
         observation_threshold : int = 3,
         circular_view : int = 3,
         decaying_factor : float = 0.9,
         spawn_tick_index : int = 0,
-        state_caching : bool = False
+        state_caching : bool = False,
     ):
         
         self.team_index : int = team_index
@@ -172,22 +139,23 @@ class Golem:
         # How many turns until the agent can act again
         self.frozen = 0
 
-        filter = np.zeros((d * 2 - 1, d * 2 - 1))
-        filter[d - 1] = np.concatenate([((d - np.arange(d)) + 1)[:-1], np.arange(d)])
-        corners = t.arange(d * 2).as_strided((d - 1, d - 1), (1, 1)).numpy() + 3
-        filter[d:,d:] = corners
-        filter[:d - 1,d:] = np.rot90(corners)
-        filter[:d - 1,:d-1] = np.rot90(np.rot90(corners)) + 1
-        filter[d:,:d-1] = np.rot90(np.rot90(np.rot90(corners))) + 1
-        filter[:,d - 1] = np.concatenate([(d - np.arange(d-1)), np.array([0]), (np.arange(d-1) + 2)])
+        # filter = np.zeros((d * 2 - 1, d * 2 - 1))
+        # filter[d - 1] = np.concatenate([((d - np.arange(d)) + 1)[:-1], np.arange(d)])
+        # corners = t.arange(d * 2).as_strided((d - 1, d - 1), (1, 1)).numpy() + 3
+        # filter[d:,d:] = corners
+        # filter[:d - 1,d:] = np.rot90(corners)
+        # filter[:d - 1,:d-1] = np.rot90(np.rot90(corners)) + 1
+        # filter[d:,:d-1] = np.rot90(np.rot90(np.rot90(corners))) + 1
+        # filter[:,d - 1] = np.concatenate([(d - np.arange(d-1)), np.array([0]), (np.arange(d-1) + 2)])
 
-        self.filters = {}
+        # self.filters = {}
 
-        for i in range(1, 5):
-            filter = np.rot90(filter)
-            # print(filter)
-            self.filters[i % 4] = t.tensor(filter.copy())
-            # print(f"Filling filter {i}")
+        # for i in range(1, 5):
+        #     filter = np.rot90(filter)
+        #     # print(filter)
+        #     self.filters[i % 4] = t.tensor(filter.copy())
+        #     # print(f"Filling filter {i}")
+        self.filters = pos_filter
             
         self.pe_grid = generate_2d_sinusoidal_pe(84, 84, d_model=d_model)  # or another dim
         
@@ -253,7 +221,7 @@ class Golem:
         brain : GolemBrain,
         n_action : int = 1,
         from_cache : tuple[t.Tensor, list[int]]  = None,
-        display_filter : bool = True
+        display_filter : bool = False
     ):
         """
 
@@ -292,7 +260,7 @@ class Golem:
             if self.reliability_level <= 0:
                 self.reliability_level = self.observation_threshold
                 # Forced
-                return self.map_size * self.map_size + 6, None, None
+                return self.map_size * self.map_size + 19, None, None
 
             # TODO: Auto broadcast when seeing other agent aka (player >= 1 and reliance == gamma because it's next turn)
             if ((self.map[:,:,self.player_position] == 1) & (self.reliance_map == self.gamma)).any():
@@ -315,18 +283,21 @@ class Golem:
         
         full_action_space, critic = brain(entry, self.pos) # N * N + 7
         
+        pos_filter = self.filters.get_view(self.pos, self.orientation)
+        
         if display_filter:
-            self.pos = t.tensor([30,30])
-            pos_filter = self.filters[self.orientation][d - self.pos[0] - 1:2 * d - self.pos[0] - 1, d - self.pos[1] - 1: 2 * d - self.pos[1] - 1]
+            # self.pos = t.tensor([30,30])
+            # pos_filter = self.filters[self.orientation][d - self.pos[0] - 1:2 * d - self.pos[0] - 1, d - self.pos[1] - 1: 2 * d - self.pos[1] - 1]
             plt.imshow(pos_filter)
+            # print(pos_filter.shape)
             # print(self.pos)
-            print(pos_filter.shape)
+            # print(pos_filter.shape)
             for x in range(d):
                 for y in range(d):
                     plt.text(x, y, str(pos_filter[y][x].int().item()))
             plt.show()
-            
-        full_action_space[:tiles] *= self.filters[self.orientation][d - self.pos[0]:2 * d - self.pos[0], d - self.pos[1] - 1: 2 * d - self.pos[1] - 1].reshape(d * d)
+        
+        full_action_space[:tiles] *= pos_filter.reshape(d * d)
         full_action_space[:tiles] *= self.reliance_map.reshape(d * d)
         
         # Put logits of impossible actions to 0
@@ -368,6 +339,7 @@ class Golem:
         for action in actions:
             if action == -1:
                 final_actions.append("Do Nothing")
+                continue
             # Decided to move
             if action < (self.map_size * self.map_size):
                 # Decide action based on maximum 
@@ -383,7 +355,7 @@ class Golem:
                 offseted_action = action - self.map_size ** 2
                 # TODO: In case of broadcast, send the serialized version as text
                 if offseted_action == 0: # Means broadcast
-                    final_actions.append(f"Broadcast {NetworkTensor(t.concat([self.inventory, self.map.flatten(), self.reliance_map.flatten(), self.pos, self.level]))}")
+                    final_actions.append(f"Broadcast {NetworkTensor(t.concat([self.inventory, self.map.flatten(), self.reliance_map.flatten(), self.pos, t.tensor([self.level])])).serialize()}")
                 elif offseted_action < len(self.possible_actions):
                     final_actions.append(self.possible_actions[offseted_action])
                     self.frozen += self.action_cost[offseted_action]
@@ -394,10 +366,10 @@ class Golem:
                 else:
                     final_actions.append("Look")
         
-        self.running_actions = final_actions
+        self.running_actions += final_actions
         
         return final_actions
-    
+
     def read_player_queue(
         self,
         response_queue : list[str]
@@ -421,10 +393,10 @@ class Golem:
                 if action == "Look":
                     self.observation_results([tile.split(" ") for tile in response[1:-1].split(", ")])
                 if action.split()[0] == "Take" and response == "ok":
-                    self.map[*self.pos] += (t.arange(len(self.resources)) == self.resources.index(action.split()[1]))
+                    self.map[*self.pos] += (t.arange(len(self.resources)) == self.resources.index(action.split()[1])).int()
                 if action.split()[0] == "Set" and response == "ok":
-                    self.map[*self.pos] -= (t.arange(len(self.resources)) == self.resources.index(action.split()[1]))
-                    
+                    self.map[*self.pos] -= (t.arange(len(self.resources)) == self.resources.index(action.split()[1])).int()
+
     def copy(self):
         
         golem = Golem(
